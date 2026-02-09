@@ -1,0 +1,40 @@
+﻿# Use Node.js 18
+FROM node:18.20.3-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# FIX: Remove any BOM and fix line endings
+RUN apk add --no-cache dos2unix && \
+    if [ -f package.json ]; then \
+        dos2unix package.json && \
+        sed -i "1s/^\xEF\xBB\xBF//" package.json && \
+        sed -i "s/\r$//" package.json; \
+    fi
+
+# Verify JSON is valid
+RUN node -e "try { require('./package.json'); console.log('\xE2\x9C\x85 package.json is valid JSON'); } catch(e) { console.error('\xE2\x9D\x8C package.json error:', e.message); process.exit(1); }"
+
+# Install dependencies
+RUN npm install --legacy-peer-deps --no-audit --no-fund
+
+# Copy source
+COPY public ./public
+COPY src ./src
+COPY .browserslistrc ./
+
+# Build
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+ENV CI=false
+ENV BROWSERSLIST_IGNORE_OLD_DATA=true
+RUN npm run build
+
+# Production stage
+FROM nginx:alpine
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY --from=builder /app/build /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
